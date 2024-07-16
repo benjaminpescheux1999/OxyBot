@@ -3,9 +3,11 @@ import glob
 from typing import List
 from multiprocessing import Pool
 from tqdm import tqdm
+import base64
 
-from langchain.document_loaders import (
+from langchain_community.document_loaders import (
     CSVLoader,
+    UnstructuredExcelLoader,
     EverNoteLoader,
     PyMuPDFLoader,
     TextLoader,
@@ -17,46 +19,52 @@ from langchain.document_loaders import (
     UnstructuredPowerPointLoader,
     UnstructuredWordDocumentLoader,
 )
-
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import Chroma
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.docstore.document import Document
+#from langchain_text_splitters import RecursiveCharacterTextSplitter
+#from langchain_community.text_splitter import RecursiveCharacterTextSplitter
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+from langchain_community.docstore.document import Document
 
 
-# Load environment variables
+# Charger les variables d'environnement
 persist_directory = os.environ.get('PERSIST_DIRECTORY', 'db')
 source_directory = os.environ.get('SOURCE_DIRECTORY', 'source_documents')
-embeddings_model_name = os.environ.get('EMBEDDINGS_MODEL_NAME', 'all-MiniLM-L6-v2')
+embeddings_model_name = os.environ.get('EMBEDDINGS_MODEL_NAME', 'all-MiniLM-L12-v2')
 chunk_size = 500
 chunk_overlap = 50
 
-# Custom document loaders
+# Chargeurs de documents personnalisés
 class MyElmLoader(UnstructuredEmailLoader):
-    """Wrapper to fallback to text/plain when default does not work"""
+    """Wrapper pour revenir à text/plain lorsque le défaut ne fonctionne pas"""
 
     def load(self) -> List[Document]:
-        """Wrapper adding fallback for elm without html"""
+        """Wrapper ajoutant une solution de repli pour elm sans html"""
         try:
             try:
                 doc = UnstructuredEmailLoader.load(self)
             except ValueError as e:
                 if 'text/html content not found in email' in str(e):
-                    # Try plain text
+                    # Essayer le texte brut
                     self.unstructured_kwargs["content_source"]="text/plain"
                     doc = UnstructuredEmailLoader.load(self)
                 else:
                     raise
         except Exception as e:
-            # Add file_path to exception message
+            # Ajouter file_path au message d'exception
             raise type(e)(f"{self.file_path}: {e}") from e
 
         return doc
-
-
-# Map file extensions to document loaders and their arguments
+class CustomCSVLoader(CSVLoader):
+    def load(self) -> List[Document]:
+        documents = super().load()  # Utilisez la méthode de chargement existante
+        for index, doc in enumerate(documents):
+            doc.metadata['row'] = index  # Ajoutez le numéro de ligne aux métadonnées
+        return documents
+# Mapper les extensions de fichiers aux chargeurs de documents et leurs arguments
 LOADER_MAPPING = {
-    ".csv": (CSVLoader, {}),
+    ".csv": (CustomCSVLoader, {"csv_args":{"delimiter":";"}}),
+    ".xlsx": (UnstructuredExcelLoader, {}),
     # ".docx": (Docx2txtLoader, {}),
     ".doc": (UnstructuredWordDocumentLoader, {}),
     ".docx": (UnstructuredWordDocumentLoader, {}),
@@ -66,28 +74,33 @@ LOADER_MAPPING = {
     ".html": (UnstructuredHTMLLoader, {}),
     ".md": (UnstructuredMarkdownLoader, {}),
     ".odt": (UnstructuredODTLoader, {}),
-    ".pdf": (PyMuPDFLoader, {}),
+    ".pdf": (PyMuPDFLoader, {"extract_images":True }),
     ".ppt": (UnstructuredPowerPointLoader, {}),
     ".pptx": (UnstructuredPowerPointLoader, {}),
     ".txt": (TextLoader, {"encoding": "utf8"}),
-    # Add more mappings for other file extensions and loaders as needed
+    # Ajouter plus de mappages pour d'autres extensions de fichiers et chargeurs si nécessaire
 }
 
 
-# Loads a single doc from specified file path
-def load_single_document(file_path: str) -> List[Document]: # Return a list of 'Document' objects 
+# Charge un seul document à partir du chemin de fichier spécifié
+def load_single_document(file_path: str) -> List[Document]: # Retourne une liste d'objets 'Document'
     ext = "." + file_path.rsplit(".", 1)[-1]
+    print("file_path ==>", file_path)
+    print("ext ==>", ext)
     if ext in LOADER_MAPPING:
         loader_class, loader_args = LOADER_MAPPING[ext]
-        loader = loader_class(file_path, **loader_args)
+        print("loader_class ==>", loader_class)
+        print("loader_args ==>", loader_args)
+        loader = loader_class(file_path=file_path, **loader_args)
+        print("loader ==>", loader)
         return loader.load()
 
     raise ValueError(f"Unsupported file extension '{ext}'")
 
-# If there's more than 1 doc, loads all docs from a source dir, optionally ignore specific files
+# S'il y a plus d'un document, charge tous les documents d'un répertoire source, en ignorant éventuellement des fichiers spécifiques
 def load_documents(source_dir: str, ignored_files: List[str] = []) -> List[Document]:
     """
-    Loads all documents from the source documents directory, ignoring specified files
+    Charge tous les documents du répertoire des documents source, en ignorant les fichiers spécifiés
     """
     all_files = []
     for ext in LOADER_MAPPING:
@@ -95,68 +108,65 @@ def load_documents(source_dir: str, ignored_files: List[str] = []) -> List[Docum
             glob.glob(os.path.join(source_dir, f"**/*{ext}"), recursive=True)
         )
     filtered_files = [file_path for file_path in all_files if file_path not in ignored_files]
-    # Parallel processing
+    # Traitement parallèle
     with Pool(processes=os.cpu_count()) as pool:
         results = []
-        with tqdm(total=len(filtered_files), desc='Loading new documents', ncols=80) as pbar:
-            for i, docs in enumerate(pool.imap_unordered(load_single_document, filtered_files)):    # Call loan_single_document for each file path in parallel
+        with tqdm(total=len(filtered_files), desc='Chargement de nouveaux documents', ncols=80) as pbar:
+            for i, docs in enumerate(pool.imap_unordered(load_single_document, filtered_files)):    # Appeler load_single_document pour chaque chemin de fichier en parallèle
                 results.extend(docs)
                 pbar.update()
 
     return results
 
-# Loads docs from source_directory using load_document
+# Charge les documents depuis source_directory en utilisant load_document
 def process_documents(ignored_files: List[str] = []) -> List[Document]:
     """
-    Load documents and split in chunks
+    Charger les documents et les diviser en morceaux
     """
-    print(f"Loading documents from {source_directory}")
+    print(f"Chargement des documents depuis {source_directory}")
     documents = load_documents(source_directory, ignored_files)
     if not documents:
-        print("No new documents to load")
+        print("Aucun nouveau document à charger")
         exit(0)
-    print(f"Loaded {len(documents)} new documents from {source_directory}")
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)  # split the docs into text chunks
+    print(f"Chargé {len(documents)} nouveaux documents depuis {source_directory}")
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)  # diviser les documents en morceaux de texte
     texts = text_splitter.split_documents(documents)
-    print(f"Split into {len(texts)} chunks of text (max. {chunk_size} tokens each)")
-    return texts    # return a list of split text chunks
+    print(f"Divisé en {len(texts)} morceaux de texte (max. {chunk_size} tokens chacun)")
+    return texts    # retourner une liste de morceaux de texte divisés
 
 def does_vectorstore_exist(persist_directory: str) -> bool:
     """
-    Checks if vectorstore exists
+    Vérifie si le vectorstore existe
     """
-    # verifies the presence of necessary files and folders for a valid vectorstore
+    # vérifie la présence des fichiers et dossiers nécessaires pour un vectorstore valide
     if os.path.exists(os.path.join(persist_directory, 'index')):
         if os.path.exists(os.path.join(persist_directory, 'chroma-collections.parquet')) and os.path.exists(os.path.join(persist_directory, 'chroma-embeddings.parquet')):
             list_index_files = glob.glob(os.path.join(persist_directory, 'index/*.bin'))
             list_index_files += glob.glob(os.path.join(persist_directory, 'index/*.pkl'))
-            # At least 3 documents are needed in a working vectorstore
+            # Au moins 3 documents sont nécessaires dans un vectorstore fonctionnel
             if len(list_index_files) > 3:
                 return True
     return False
 
 def main():
-    # Create embeddings
+    # Créer des embeddings
     embeddings = HuggingFaceEmbeddings(model_name=embeddings_model_name)
 
     if does_vectorstore_exist(persist_directory):
-        # Update and store locally vectorstore
-        print(f"Appending to existing vectorstore at {persist_directory}")
+        print(f"Ajout au vectorstore existant à {persist_directory}")
         db = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
         collection = db.get()
         texts = process_documents([metadata['source'] for metadata in collection['metadatas']])
-        print(f"Creating embeddings. May take some minutes...")
+        print(f"Création des embeddings. Cela peut prendre quelques minutes...")
         db.add_documents(texts)
     else:
-        # Create and store locally vectorstore
-        print("Creating new vectorstore")
+        print("Création d'un nouveau vectorstore")
         texts = process_documents()
-        print(f"Creating embeddings. May take some minutes...")
+        print(f"Création des embeddings. Cela peut prendre quelques minutes...")
         db = Chroma.from_documents(texts, embeddings, persist_directory=persist_directory)
-    db.persist()
+    
     db = None
-
-    print(f"Ingestion complete! You can now run app.py to start querying your documents.")
+    print(f"Ingestion terminée ! Vous pouvez maintenant exécuter app.py pour commencer à interroger vos documents.")
 
 
 if __name__ == "__main__":
