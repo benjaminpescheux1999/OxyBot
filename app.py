@@ -196,7 +196,6 @@ Fin des instructions"""
 
                     metadata_string = "\n".join(metadata_texts)
                     # message_text += "\n### Sources :\n" + metadata_string  # Ajouter les métadonnées au texte de la réponse
-
                     # message_placeholder.markdown(message_text)  # Afficher le texte concaténé
                     return answer, grouped_metadata
             except Exception as e:
