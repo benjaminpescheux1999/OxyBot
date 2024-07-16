@@ -171,7 +171,7 @@ Fin des instructions"""
                 res = qa.invoke(full_query)
                 grouped_metadata = {}
                 #si res['source_documents'] n'est pas vide
-                st.markdown(res)
+                # st.markdown(res)
                 if res['source_documents']:
                     st.markdown("**Sources:**")
                     for doc in res['source_documents']:
