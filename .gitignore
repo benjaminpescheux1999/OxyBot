@@ -5,3 +5,12 @@ Makefile
 Dockerfile
 .venv
 venv
+db/
+# source_documents/
+source_documents_old/
+
+# Ignore everything in the dossier
+source_documents/*
+
+# Do not ignore files that start with context-
+!source_documents/context-*

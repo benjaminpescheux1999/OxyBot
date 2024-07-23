@@ -4,6 +4,7 @@ from typing import List
 from multiprocessing import Pool
 from tqdm import tqdm
 import base64
+from langchain_community.vectorstores.utils import filter_complex_metadata
 
 from langchain_community.document_loaders import (
     CSVLoader,
@@ -25,14 +26,15 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_community.docstore.document import Document
+from sentence_transformers import SentenceTransformer
 
 
 # Charger les variables d'environnement
 persist_directory = os.environ.get('PERSIST_DIRECTORY', 'db')
 source_directory = os.environ.get('SOURCE_DIRECTORY', 'source_documents')
-embeddings_model_name = os.environ.get('EMBEDDINGS_MODEL_NAME', 'all-MiniLM-L12-v2')
-chunk_size = 500
-chunk_overlap = 50
+embeddings_model_name = os.environ.get('EMBEDDINGS_MODEL_NAME', 'all-mpnet-base-v2')
+chunk_size = 1500
+chunk_overlap = 150
 
 # Chargeurs de documents personnalisés
 class MyElmLoader(UnstructuredEmailLoader):
@@ -61,6 +63,7 @@ class CustomCSVLoader(CSVLoader):
         for index, doc in enumerate(documents):
             doc.metadata['row'] = index  # Ajoutez le numéro de ligne aux métadonnées
         return documents
+    
 # Mapper les extensions de fichiers aux chargeurs de documents et leurs arguments
 LOADER_MAPPING = {
     ".csv": (CustomCSVLoader, {"csv_args":{"delimiter":";"}}),
@@ -151,6 +154,7 @@ def does_vectorstore_exist(persist_directory: str) -> bool:
 def main():
     # Créer des embeddings
     embeddings = HuggingFaceEmbeddings(model_name=embeddings_model_name)
+    # embeddings =  SentenceTransformer("dangvantuan/sentence-camembert-large")
 
     if does_vectorstore_exist(persist_directory):
         print(f"Ajout au vectorstore existant à {persist_directory}")
@@ -163,10 +167,13 @@ def main():
         print("Création d'un nouveau vectorstore")
         texts = process_documents()
         print(f"Création des embeddings. Cela peut prendre quelques minutes...")
-        db = Chroma.from_documents(texts, embeddings, persist_directory=persist_directory)
+        db = Chroma.from_documents(filter_complex_metadata(texts), embeddings, persist_directory=persist_directory)
     
     db = None
-    print(f"Ingestion terminée ! Vous pouvez maintenant exécuter app.py pour commencer à interroger vos documents.")
+    #lancer automatiquement l'application streamlit
+    # os.system("python directory_public.py")
+    os.system("streamlit run app.py")
+    print(f"Ingestion terminée ! Vous pouvez maintenant exécuter streamlit run app.py pour commencer à interroger vos documents.")
 
 
 if __name__ == "__main__":
