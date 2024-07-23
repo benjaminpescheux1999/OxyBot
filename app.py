@@ -1,21 +1,16 @@
 import streamlit as st
-import streamlit.components.v1 as components
 
 from langchain_community.llms import Ollama
 import os
 import chromadb
 from langchain.chains.retrieval_qa.base import RetrievalQA
 from langchain_huggingface import HuggingFaceEmbeddings
-from chromadb.config import Settings
-from langchain_community.embeddings.ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
 from langchain.callbacks.base import BaseCallbackHandler
 import urllib.parse
 import streamlit.components.v1 as components
-from streamlit_pdf_viewer import pdf_viewer
 import base64
 import requests
-from streamlit_pdf_reader import pdf_reader
 import PyPDF2
 import pandas as pd
 import io
@@ -24,9 +19,6 @@ import psutil
 import sys
 from fpdf import FPDF
 import tempfile
-from PyPDF2 import PdfReader, PdfWriter
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
 
 
 # Custom streamlit handler to display LLM outputs in stream mode
